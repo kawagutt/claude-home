@@ -22,7 +22,7 @@ The user's initial idea may be incomplete, based on a misunderstanding, or not y
 # Rules
 
 * Do not implement anything.
-* Do not edit or create files.
+* Do not edit or create repository files. The only file you may write is the final shaped instruction saved under `~/.claude/plans/`, outside the target repository, as described in the save step.
 * Do not produce a detailed specification or implementation plan unless the user explicitly asks for one.
 * Do not simply rewrite the initial input without examining it.
 * Do not assume the user's proposed solution is necessarily the right solution.
@@ -108,3 +108,12 @@ After the shaped instruction, add:
 ## Notes
 
 Include only unresolved assumptions or a very brief explanation of an important decision. Omit this section when there is nothing useful to add.
+
+## Saved artifact
+
+Save the shaped instruction so a later `/plan` or `/implementation` can reuse it:
+
+* Target directory: `~/.claude/plans/<project>/<yyyymmdd>_<slug>/`, where `<project>` is the basename of the git toplevel (or the current directory when not a git repo), `<yyyymmdd>` is `date +%Y%m%d`, and `<slug>` is a short kebab-case label from the topic. Create it with `mkdir -p`.
+* This location is outside the target repository, so the artifact is never committed and never dirties the project.
+* Choose the smallest `N` starting at 0 for which `spec_v<N>.md` does not exist; never overwrite an existing version. Write the shaped instruction to `spec_v<N>.md`, then copy it to `spec_latest.md`.
+* State the written path to the user.

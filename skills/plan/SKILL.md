@@ -21,6 +21,7 @@ Act as the orchestrator. Do not implement the task. Coordinate a Planner subagen
 
 * Do not edit repository files.
 * Keep all investigation read-only.
+* The only file you write is the final plan artifact under `~/.claude/plans/`, outside the target repository, as described in the save step. Do not modify any repository files.
 * Prefer the simplest correct plan.
 * Preserve fail-fast behavior; do not plan silent fallback behavior or hidden normalization unless requested.
 * Do not ask the user questions whose answers can be found by inspecting the repository.
@@ -72,6 +73,15 @@ Act as the orchestrator. Do not implement the task. Coordinate a Planner subagen
    * Include assumptions and unresolved decisions.
    * Identify verification steps.
 
+7. Save the plan artifact.
+
+   * Target directory: `~/.claude/plans/<project>/<yyyymmdd>_<slug>/`, where `<project>` is the basename of the git toplevel (or the current directory when not a git repo), `<yyyymmdd>` is `date +%Y%m%d`, and `<slug>` is a short kebab-case label (2-4 words) derived from the task. Create it with `mkdir -p`.
+   * If this plan came from a `/shape` result already saved under `~/.claude/plans/...`, reuse that same directory instead of creating a new one.
+   * This location is outside the target repository, so the artifact is never committed and never dirties the project.
+   * Choose the next version: the smallest `N` starting at 0 for which `plan_v<N>.md` does not exist. Never overwrite an existing `plan_v<N>.md`.
+   * Write the synthesized plan to `plan_v<N>.md`, then write the same content to `plan_latest.md`, overwriting it.
+   * This is the only file write in this workflow; the planner and reviewer subagents remain read-only.
+
 # Final output
 
 Return:
@@ -92,6 +102,10 @@ Include:
 
 Briefly state whether the independent plan review passed, required revisions, or still has concerns.
 
+## Saved artifact
+
+State the absolute path of the `plan_v<N>.md` you wrote, and note that `plan_latest.md` mirrors it.
+
 ## Next step
 
-Tell the user they can run `/implementation` with this plan when ready.
+Tell the user they can run `/implementation` with this plan, or point it at the saved `plan_latest.md`, when ready.
