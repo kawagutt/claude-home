@@ -1,0 +1,11 @@
+# Whitelist approach: ignore everything in ~/.claude by default,
+# then allow only the authored, secret-free workflow config.
+# This keeps transcripts (projects/), sessions, caches, and
+# settings.json (which holds a live API token) out of the repo.
+
+/*
+
+!/.gitignore
+!/agents/
+!/skills/
+!/CLAUDE.md
