@@ -29,6 +29,7 @@ Act as the orchestrator. Coordinate implementation, independent review, fixes, a
 * Preserve fail-fast behavior.
 * Do not add fallback behavior, hidden normalization, or silent auto-correction unless requested.
 * Run meaningful verification before declaring completion.
+* Save a record of the run (reviews, triage, verification) under `~/.claude/plans/...`, outside the target repository. Record only what carries signal; skip meaningless or empty records.
 
 # Process
 
@@ -83,6 +84,13 @@ Act as the orchestrator. Coordinate implementation, independent review, fixes, a
    * For nontrivial product changes, verify the affected flow end-to-end when practical.
    * Report exact failures if verification fails.
 
+7. Save the run record.
+
+   * Save the record under the same session directory as the plan: `~/.claude/plans/<project>/<yyyymmdd>_<slug>/`. If the plan came from a saved `plan_*.md`, reuse that directory; otherwise derive and create it as in the `/plan` save step. This is outside the target repository, so it never dirties or gets committed to the project.
+   * Choose the smallest `N` starting at 0 for which `implementation_v<N>.md` does not exist; never overwrite an existing version. Write the record to `implementation_v<N>.md`, then copy it to `implementation_latest.md`.
+   * Include only what carries signal: a brief summary of what changed, meaningful review and test-review findings and how each was triaged (fixed, or rejected with the reason), any fix/review rounds, and the verification commands with their results. Omit sections that add no information.
+   * Skip the record entirely when there is nothing meaningful to capture, such as a trivial change with no findings and an obvious passing check. Do not create empty or boilerplate records.
+
 # Final output
 
 Return:
@@ -102,3 +110,7 @@ List commands or checks run and their results.
 ## Notes
 
 Mention remaining risks, assumptions, or follow-up work only if relevant.
+
+## Saved record
+
+State the path of the `implementation_v<N>.md` written, and that `implementation_latest.md` mirrors it. If no record was warranted, say so in one line.
