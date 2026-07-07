@@ -19,7 +19,8 @@ Act as the orchestrator. Coordinate implementation, independent review, fixes, a
 
 # Rules
 
-* Before starting, check whether relevant tracked files are already dirty. If they are, stop and ask before mixing edits.
+* Start from a clean working tree on a new branch. Verify there are no uncommitted changes, then create and switch to a new branch before implementing. Do all implementation there.
+* If the working tree is dirty, the directory is not a git repository, or a branch cannot be created, stop and ask the user how to proceed instead of implementing in place. Do not stash, discard, or commit the user's existing changes on your own.
 * Do not touch untracked files not created in this session unless the user explicitly asks.
 * Use a fresh Implementer subagent for implementation when available.
 * Reviewer agents must be read-only and must not fix issues.
@@ -31,10 +32,13 @@ Act as the orchestrator. Coordinate implementation, independent review, fixes, a
 
 # Process
 
-1. Validate input.
+1. Validate input and prepare a clean branch.
 
    * If the plan is missing or too vague, stop and ask the user to run `/plan` or provide a clearer plan.
-   * Identify likely files and check their git status before editing.
+   * Identify likely files and areas the plan will touch.
+   * Confirm the git working tree is clean (`git status`). If there are uncommitted changes, or this is not a git repository, stop and ask the user how to proceed. Do not stash, discard, or commit existing changes on your own.
+   * Create and switch to a new branch named descriptively from the task, and do all implementation there.
+   * If a branch cannot be created, or the user prefers to work in place, follow the user's direction.
 
 2. Decide checkpoint size.
 
