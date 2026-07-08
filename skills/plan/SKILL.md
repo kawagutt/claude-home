@@ -28,6 +28,7 @@ Act as the orchestrator. Do not implement the task. Coordinate a Planner subagen
 * Ask only for decisions that materially affect the plan.
 * The planner and reviewers must be separate contexts.
 * The reviewers must not modify the plan or repository.
+* After each subagent returns, print a short progress note to the user before continuing: a first line naming the subagent that finished, then a few bullet points summarizing its result (for the planner, the plan's shape and scope; for each reviewer, its verdict and top findings). Keep it to a handful of lines; do not dump the subagent's full output.
 * Limit planner revision loops to at most two unless the user explicitly asks for more.
 
 # Process

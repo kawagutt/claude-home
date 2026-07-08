@@ -25,6 +25,7 @@ Act as the orchestrator. Coordinate implementation, independent review, fixes, a
 * Use a fresh Implementer subagent for implementation when available.
 * Reviewer agents must be read-only and must not fix issues.
 * Fixes must be made by an Implementer, not a Reviewer.
+* After each subagent returns, print a short progress note to the user before continuing: a first line naming the subagent that finished, then a few bullet points summarizing its result (for an implementer, what it changed; for a reviewer, its verdict and top findings; for the finding-verifier, confirmed/adjusted/rejected counts). Keep it to a handful of lines; do not dump the subagent's full output.
 * Prefer simple, scoped changes.
 * Preserve fail-fast behavior.
 * Do not add fallback behavior, hidden normalization, or silent auto-correction unless requested.
