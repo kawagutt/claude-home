@@ -64,31 +64,51 @@ Act as the orchestrator. Coordinate implementation, independent review, fixes, a
    * the diff or list of changed files
    * relevant repository constraints
 
-   Then launch:
+   Then launch six independent reviewers covering two model perspectives, in parallel. Five specialized reviewers run on gpt-5.5, each on one concern so every perspective gets a focused pass; one holistic reviewer runs on claude-opus-4-8 as the second-model second opinion.
 
-   * Code Reviewer: use `code-reviewer` custom subagent and the `implementation-code-review` skill.
-   * Test Reviewer: use `test-reviewer` custom subagent and the `implementation-test-review` skill.
+   gpt-5.5 specialized reviewers — each has `model: opus` frontmatter that resolves to gpt-5.5, so spawn them normally with no model override:
+
+   * Spec Reviewer: use the `spec-reviewer` subagent and the `implementation-spec-review` skill — does the code do what the plan and request asked; correctness and behavioral coverage.
+   * Architecture Reviewer: use the `architecture-reviewer` subagent and the `implementation-architecture-review` skill — structural soundness, boundaries, and fit with the existing design.
+   * Refactor Reviewer: use the `refactor-reviewer` subagent and the `implementation-refactor-review` skill — naming consistency, duplication, unnecessary fallback, and over-abstraction, behavior-preserving only.
+   * Environment Reviewer: use the `environment-reviewer` subagent and the `implementation-environment-review` skill — dependencies, configuration, compatibility, and permissions.
+   * Test Reviewer: use the `test-reviewer` subagent and the `implementation-test-review` skill — coverage, edge cases, and verification adequacy.
+
+   claude-opus-4-8 holistic reviewer:
+
+   * Holistic Reviewer: use the `impl-holistic-reviewer` subagent for a single combined pass over all of the above concerns. Spawn it with the model set to the `sonnet` alias (remapped to claude-opus-4-8 via `ANTHROPIC_DEFAULT_SONNET_MODEL`). This is the independent second-model second opinion.
 
    Reviewers are read-only. They report issues only.
 
-5. Triage findings.
+5. Verify findings before triage.
 
-   * Ignore findings that are clearly out of scope or incorrect, and explain why.
+   Combine the six reviewers' findings and deduplicate. For each meaningful finding, spawn a `finding-verifier` subagent to independently confirm it, deepen it, decide whether it is actually a false positive, and sweep the codebase for similar occurrences. The verifier is read-only and reports a per-finding verdict.
+
+   * Verify each finding with the *opposite* model from the reviewer that raised it, so no finding is checked by the model that produced it:
+     * findings from the five gpt-5.5 specialized reviewers → spawn the verifier with the `sonnet` alias (claude-opus-4-8).
+     * findings from the claude-opus-4-8 holistic reviewer → spawn the verifier with `model: opus` (gpt-5.5).
+   * Choose fan-out granularity by weight: one verifier per blocking or significant finding for depth; batch closely related low-severity findings into a single verifier call. Skip verifying findings that are trivially out of scope.
+   * Carry forward each verdict: drop false positives (record why), keep confirmed findings with their adjusted severity, and promote any similar occurrences the verifier surfaced to new findings of the same class.
+
+6. Triage verified findings.
+
+   * Work from the verified set. Note where the gpt-5.5 specialized reviewers and the claude-opus-4-8 holistic reviewer agree or disagree, and weigh disagreements on their merits rather than by majority.
+   * Ignore findings that are clearly out of scope or that verification refuted, and explain why.
    * Send valid findings back to an Implementer for fixes.
    * Re-review significant fixes when needed.
    * Limit fix/review loops to two unless the user asks for more.
 
-6. Final verification.
+7. Final verification.
 
    * Run relevant tests, type checks, linters, or direct behavior checks.
    * For nontrivial product changes, verify the affected flow end-to-end when practical.
    * Report exact failures if verification fails.
 
-7. Save the run record.
+8. Save the run record.
 
    * Save the record under the same session directory as the plan: `~/.claude/plans/<project>/<yyyymmdd>_<slug>/`. If the plan came from a saved `plan_*.md`, reuse that directory; otherwise derive and create it as in the `/plan` save step. This is outside the target repository, so it never dirties or gets committed to the project.
    * Choose the smallest `N` starting at 0 for which `implementation_v<N>.md` does not exist; never overwrite an existing version. Write the record to `implementation_v<N>.md`, then copy it to `implementation_latest.md`.
-   * Include only what carries signal: a brief summary of what changed, meaningful review and test-review findings and how each was triaged (fixed, or rejected with the reason), any fix/review rounds, and the verification commands with their results. Omit sections that add no information.
+   * Include only what carries signal: a brief summary of what changed, meaningful findings from the six reviews and the finding-verification verdicts (confirmed, adjusted, or rejected as false positive) and how each was triaged (fixed, or rejected with the reason), any fix/review rounds, and the verification commands with their results. Omit sections that add no information.
    * Skip the record entirely when there is nothing meaningful to capture, such as a trivial change with no findings and an obvious passing check. Do not create empty or boilerplate records.
 
 # Final output
@@ -101,7 +121,7 @@ Summarize what changed.
 
 ## Reviews
 
-Summarize code review and test review outcomes, including any skipped or rejected findings.
+Summarize the outcomes across the five gpt-5.5 specialized reviews (spec, architecture, refactor, environment, test) and the claude-opus-4-8 holistic review, then the finding-verification results: which findings were confirmed, adjusted, or rejected as false positives, and any similar occurrences the verifier surfaced. Call out any material disagreement between the two model perspectives.
 
 ## Verification
 

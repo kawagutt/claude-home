@@ -26,8 +26,8 @@ Act as the orchestrator. Do not implement the task. Coordinate a Planner subagen
 * Preserve fail-fast behavior; do not plan silent fallback behavior or hidden normalization unless requested.
 * Do not ask the user questions whose answers can be found by inspecting the repository.
 * Ask only for decisions that materially affect the plan.
-* The planner and reviewer must be separate contexts.
-* The reviewer must not modify the plan or repository.
+* The planner and reviewers must be separate contexts.
+* The reviewers must not modify the plan or repository.
 * Limit planner revision loops to at most two unless the user explicitly asks for more.
 
 # Process
@@ -51,19 +51,27 @@ Act as the orchestrator. Do not implement the task. Coordinate a Planner subagen
    * constraints from CLAUDE.md and project instructions
    * explicit instruction to use the `plan-planning` skill
 
-4. Launch a Plan Reviewer subagent after the planner returns.
+4. Launch two independent Plan Reviewer subagents in parallel after the planner returns.
 
-   Use the `plan-reviewer` custom subagent when available. Provide:
+   Run the same review from two model perspectives, each in a fresh separate context:
+
+   * claude-opus-4-8 perspective: spawn the `plan-reviewer` custom subagent with the model set to the `sonnet` alias (remapped to claude-opus-4-8 in this environment via `ANTHROPIC_DEFAULT_SONNET_MODEL`).
+   * gpt-5.5 perspective: spawn the `plan-reviewer` custom subagent with the model set to the `opus` alias (which maps to gpt-5.5 in this environment via `ANTHROPIC_DEFAULT_OPUS_MODEL`).
+
+   Provide each reviewer:
 
    * the original request or shaped instruction
    * the generated plan
    * relevant repository context
    * explicit instruction to use the `plan-review` skill
 
-5. If the reviewer reports blocking issues:
+   Keep the two reviewers independent; do not let one see the other's findings.
 
-   * return the review to the Planner subagent for revision
-   * repeat review after revision
+5. If either reviewer reports blocking issues:
+
+   * return the combined findings to the Planner subagent for revision
+   * note where the two models agree or disagree, and weigh disagreements on their merits rather than by majority
+   * repeat both reviews after revision
    * stop after two revision rounds and present remaining risks clearly
 
 6. Synthesize the final plan.
@@ -100,7 +108,7 @@ Include:
 
 ## Review summary
 
-Briefly state whether the independent plan review passed, required revisions, or still has concerns.
+Briefly state whether each independent plan review passed, required revisions, or still has concerns. Report the claude-opus-4-8 and gpt-5.5 perspectives separately, and call out any material disagreement between them.
 
 ## Saved artifact
 
