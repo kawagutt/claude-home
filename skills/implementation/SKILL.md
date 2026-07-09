@@ -1,7 +1,7 @@
 ---
 name: implementation
-description: Orchestrate implementation from an approved plan using a fresh implementer, independent code and test review, fixes, and final verification.
-argument-hint: "<approved implementation plan>"
+description: Orchestrate implementation from an approved plan using a fresh implementer, risk-based review, fixes, and final verification.
+argument-hint: "<plan-file or approved plan>"
 disable-model-invocation: true
 ---
 
@@ -19,8 +19,10 @@ Act as the orchestrator. Coordinate implementation, independent review, fixes, a
 
 # Rules
 
-* Start from a clean working tree on a new branch. Verify there are no uncommitted changes, then create and switch to a new branch before implementing. Do all implementation there.
-* If the working tree is dirty, the directory is not a git repository, or a branch cannot be created, stop and ask the user how to proceed instead of implementing in place. Do not stash, discard, or commit the user's existing changes on your own.
+* Run immediate preflight before any implementation work.
+* Do not stash, discard, commit, or otherwise clean up the user's existing changes on your own.
+* Do not create or switch branches without user approval.
+* After preflight passes, implement and fix without asking before each file edit or write. Only stop for approval on branch creation, dirty working tree handling, or destructive git/filesystem operations. Preflight must pass before any `Edit` or `Write`.
 * Do not touch untracked files not created in this session unless the user explicitly asks.
 * Use a fresh Implementer subagent for implementation when available.
 * Reviewer agents must be read-only and must not fix issues.
@@ -30,19 +32,57 @@ Act as the orchestrator. Coordinate implementation, independent review, fixes, a
 * Preserve fail-fast behavior.
 * Do not add fallback behavior, hidden normalization, or silent auto-correction unless requested.
 * Run meaningful verification before declaring completion.
-* Save a record of the run (reviews, triage, verification) under `~/.claude/plans/...`, outside the target repository. Record only what carries signal; skip meaningless or empty records.
+* Save a record of the run under `<project>/.claude/workflows/...` in the same session directory as the plan. Record only what carries signal; skip meaningless or empty records.
+* Choose the lightest review profile that fits the change. Do not run every reviewer on every task.
+* When using a second-model reviewer or verifier, do not assume the requested per-invocation model was honored. If `CLAUDE_CODE_SUBAGENT_MODEL` is set, it may override per-invocation and agent-frontmatter model choices. Before high-risk second-model review, check whether that variable forces all subagents to one model. If second-model independence cannot be guaranteed, warn the user instead of claiming a second-model review.
 
 # Process
 
-1. Validate input and prepare a clean branch.
+1. Immediate preflight.
 
+   Do this before launching subagents or making edits.
+
+   **Resolve target project**
+
+   * If the argument is a file path, note the plan path.
+   * If the argument is inline text, use it directly. Use the current git repository root as the target project root. If the current directory is not inside a git repository, use the current working directory and follow the non-git confirmation rule below.
    * If the plan is missing or too vague, stop and ask the user to run `/plan` or provide a clearer plan.
-   * Identify likely files and areas the plan will touch.
-   * Confirm the git working tree is clean (`git status`). If there are uncommitted changes, or this is not a git repository, stop and ask the user how to proceed. Do not stash, discard, or commit existing changes on your own.
-   * Create and switch to a new branch named descriptively from the task, and do all implementation there.
-   * If a branch cannot be created, or the user prefers to work in place, follow the user's direction.
+   * If the argument is a plan file path under `<project>/.claude/workflows/...`, derive `<project>` from that path. The project root is the path segment immediately before `.claude/workflows/`.
+   * Before running `git status` or making edits, verify the current working directory is inside the target project root. If it is not, stop and ask the user to switch to the correct project directory.
 
-2. Decide checkpoint size.
+   **Dirty check (first)**
+
+   * Run `git status` from the target project root immediately (for example, `git -C <project> status`).
+   * Ignored paths—including `.claude/workflows/` when excluded via `.gitignore`, `.git/info/exclude`, or global exclude—do not count as dirty.
+
+   If the working tree is dirty outside ignored paths:
+
+   * stop immediately; do not implement
+   * do not stash, discard, commit, or delete anything on your own
+   * list the dirty files briefly
+   * ask the user how to proceed
+   * wait for explicit cleanup or handling instructions
+
+   **Branch decision (after clean check)**
+
+   After the working tree is confirmed clean, read the plan only enough to classify task size and risk. Then recommend whether to create a new branch. Do not do deep implementation analysis or launch subagents before the branch decision is resolved.
+
+   * say the working tree is clean
+   * recommend whether to create a new branch based on task risk:
+     * recommend a new branch for non-trivial, multi-file, or behavior-changing work
+     * say the current branch is fine for very small localized fixes
+   * ask for approval before creating or switching branches
+   * do not create or switch branches on your own
+
+   Example when recommending a branch:
+
+   ```text
+   The working tree is clean. I recommend creating a new branch because this is a multi-file behavior change. Should I create one now, or continue on the current branch?
+   ```
+
+   If this is not a git repository, continue only after the user confirms how to proceed.
+
+2. Choose checkpoint size.
 
    * Small task: implement all planned tasks, then review once.
    * Larger task: implement natural checkpoints and review each checkpoint.
@@ -57,60 +97,88 @@ Act as the orchestrator. Coordinate implementation, independent review, fixes, a
    * instruction to use `implementation-execution` and `implementation-tdd` practices
    * scope boundaries
 
-4. After implementation, run independent reviews in parallel when possible.
+4. Choose a review profile.
 
-   Reviewers start in a fresh context. Provide each reviewer:
+   Classify the change and run only the reviewers that fit. Default to the lightest profile that matches.
 
-   * the approved plan or fix request
-   * the diff or list of changed files
-   * relevant repository constraints
+   | Profile | When to use | Reviewers |
+   | --- | --- | --- |
+   | Small | localized fix, few files, no contract change | `spec-reviewer`, `test-reviewer` |
+   | Medium | multi-file or moderate behavior change | above + `refactor-reviewer` |
+   | Structural / risky | layering, public contract, schema, or design changes | above + `architecture-reviewer` |
+   | Config / dependency / runtime | deps, CI, scripts, env, permissions | `spec-reviewer`, `environment-reviewer`, `test-reviewer` |
+   | High-risk / confusing | security-sensitive, subtle correctness, or major cross-cutting risk | add `holistic-reviewer` on a second configured model |
 
-   Then launch six independent reviewers covering two model perspectives, in parallel. Five specialized reviewers run on gpt-5.5, each on one concern so every perspective gets a focused pass; one holistic reviewer runs on claude-opus-4-8 as the second-model second opinion.
+   Config/runtime and structural profiles can combine when both apply.
 
-   gpt-5.5 specialized reviewers — each has `model: opus` frontmatter that resolves to gpt-5.5, so spawn them normally with no model override:
+   The orchestrator runs `git diff`, `git status`, and any needed verification commands. Reviewers use `Read`, `Grep`, and `Glob` only and cannot run shell commands themselves.
 
-   * Spec Reviewer: use the `spec-reviewer` subagent and the `implementation-spec-review` skill — does the code do what the plan and request asked; correctness and behavioral coverage.
-   * Architecture Reviewer: use the `architecture-reviewer` subagent and the `implementation-architecture-review` skill — structural soundness, boundaries, and fit with the existing design.
-   * Refactor Reviewer: use the `refactor-reviewer` subagent and the `implementation-refactor-review` skill — naming consistency, duplication, unnecessary fallback, and over-abstraction, behavior-preserving only.
-   * Environment Reviewer: use the `environment-reviewer` subagent and the `implementation-environment-review` skill — dependencies, configuration, compatibility, and permissions.
-   * Test Reviewer: use the `test-reviewer` subagent and the `implementation-test-review` skill — coverage, edge cases, and verification adequacy.
+5. Run the selected reviewers in parallel when possible.
 
-   claude-opus-4-8 holistic reviewer:
+   Provide each reviewer with this **reviewer context package**:
 
-   * Holistic Reviewer: use the `impl-holistic-reviewer` subagent for a single combined pass over all of the above concerns. Spawn it with the model set to the `sonnet` alias (remapped to claude-opus-4-8 via `ANTHROPIC_DEFAULT_SONNET_MODEL`). This is the independent second-model second opinion.
+   * approved plan or fix request
+   * **unified diff with enough context** (required)
+   * changed file list
+   * git status summary
+   * relevant test output or verification output
+   * relevant project constraints from CLAUDE.md
+   * any files or snippets the reviewer must inspect
+   * explicit instruction to use its matching `implementation-*-review` skill
 
    Reviewers are read-only. They report issues only.
 
-5. Verify findings before triage.
+6. Verify findings only when needed.
 
-   Combine the six reviewers' findings and deduplicate. For each meaningful finding, spawn a `finding-verifier` subagent to independently confirm it, deepen it, decide whether it is actually a false positive, and sweep the codebase for similar occurrences. The verifier is read-only and reports a per-finding verdict.
+   Combine reviewer findings and deduplicate.
 
-   * Verify each finding with the *opposite* model from the reviewer that raised it, so no finding is checked by the model that produced it:
-     * findings from the five gpt-5.5 specialized reviewers → spawn the verifier with the `sonnet` alias (claude-opus-4-8).
-     * findings from the claude-opus-4-8 holistic reviewer → spawn the verifier with `model: opus` (gpt-5.5).
-   * Choose fan-out granularity by weight: one verifier per blocking or significant finding for depth; batch closely related low-severity findings into a single verifier call. Skip verifying findings that are trivially out of scope.
-   * Carry forward each verdict: drop false positives (record why), keep confirmed findings with their adjusted severity, and promote any similar occurrences the verifier surfaced to new findings of the same class.
+   Run `finding-verifier` only for:
 
-6. Triage verified findings.
+   * blocking findings
+   * materially disputed findings between reviewers
+   * high-risk runs where holistic review surfaced a significant concern worth confirming
 
-   * Work from the verified set. Note where the gpt-5.5 specialized reviewers and the claude-opus-4-8 holistic reviewer agree or disagree, and weigh disagreements on their merits rather than by majority.
+   Do not verify every non-blocking finding by default.
+
+   When verifying, spawn the verifier on a different configured model from the reviewer that raised the finding when second-model independence is available. If `CLAUDE_CODE_SUBAGENT_MODEL` prevents that, note the limitation in the review summary.
+
+   Provide each verifier with:
+
+   * the original finding
+   * the unified diff
+   * the list of changed files
+   * relevant surrounding files or snippets
+   * suspected patterns or search terms for sweeping similar occurrences
+
+   Carry forward each verdict: drop false positives (record why), keep confirmed findings with their adjusted severity, and promote any similar occurrences the verifier surfaced to new findings of the same class.
+
+7. Triage findings.
+
+   * Work from the verified set when verification ran; otherwise use the raw reviewer findings.
    * Ignore findings that are clearly out of scope or that verification refuted, and explain why.
-   * Send valid findings back to an Implementer for fixes.
+   * Send blocking and agreed meaningful findings back to an Implementer for fixes.
    * Re-review significant fixes when needed.
    * Limit fix/review loops to two unless the user asks for more.
 
-7. Final verification.
+8. Final verification.
 
    * Run relevant tests, type checks, linters, or direct behavior checks.
    * For nontrivial product changes, verify the affected flow end-to-end when practical.
    * Report exact failures if verification fails.
 
-8. Save the run record.
+9. Save the run record.
 
-   * Save the record under the same session directory as the plan: `~/.claude/plans/<project>/<yyyymmdd>_<slug>/`. If the plan came from a saved `plan_*.md`, reuse that directory; otherwise derive and create it as in the `/plan` save step. This is outside the target repository, so it never dirties or gets committed to the project.
+   Store workflow artifacts inside the current project under:
+
+   ```text
+   <project>/.claude/workflows/<yyyymmdd>_<short-slug>/
+   ```
+
+   * Save the record under the same session directory as the plan. If the plan came from a saved `plan_*.md`, reuse that directory; otherwise derive and create it as in the `/plan` save step.
+   * If `.claude/workflows/` is not ignored yet and this is the first workflow write in the session, follow the same `.git/info/exclude` recommendation as in `/shape` and `/plan` before writing (check with `git check-ignore -q .claude/workflows/ .claude/workflows/__check__`; add the exclude entry only if not already present). If the user declines exclude setup, ask whether to save anyway as untracked or stop without saving. Do not silently save an unignored workflow artifact.
    * Choose the smallest `N` starting at 0 for which `implementation_v<N>.md` does not exist; never overwrite an existing version. Write the record to `implementation_v<N>.md`, then copy it to `implementation_latest.md`.
-   * Include only what carries signal: a brief summary of what changed, meaningful findings from the six reviews and the finding-verification verdicts (confirmed, adjusted, or rejected as false positive) and how each was triaged (fixed, or rejected with the reason), any fix/review rounds, and the verification commands with their results. Omit sections that add no information.
-   * Skip the record entirely when there is nothing meaningful to capture, such as a trivial change with no findings and an obvious passing check. Do not create empty or boilerplate records.
+   * Include only what carries signal: review profile used, what changed, meaningful findings and how they were triaged, any verification runs, and fix/review rounds. Omit sections that add no information.
+   * Skip the record entirely when there is nothing meaningful to capture. Do not create empty or boilerplate records.
 
 # Final output
 
@@ -122,7 +190,7 @@ Summarize what changed.
 
 ## Reviews
 
-Summarize the outcomes across the five gpt-5.5 specialized reviews (spec, architecture, refactor, environment, test) and the claude-opus-4-8 holistic review, then the finding-verification results: which findings were confirmed, adjusted, or rejected as false positives, and any similar occurrences the verifier surfaced. Call out any material disagreement between the two model perspectives.
+State which review profile ran and summarize outcomes. If verification ran, note which findings were confirmed, adjusted, or rejected as false positives.
 
 ## Verification
 

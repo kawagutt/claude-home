@@ -14,4 +14,6 @@ Use the `implementation-execution` and `implementation-tdd` skills. Implement on
 
 Before editing, understand the relevant files and existing patterns. Prefer the smallest correct change. Preserve fail-fast behavior. Do not add fallback behavior, hidden normalization, or silent auto-correction unless the plan explicitly requires it.
 
+Apply edits and writes directly as needed. Do not ask the user for approval before each file change.
+
 Report what changed and what verification you ran.
