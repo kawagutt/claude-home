@@ -22,13 +22,13 @@ Act as the orchestrator. Coordinate implementation, independent review, fixes, a
 * Run immediate preflight before any implementation work.
 * Do not stash, discard, commit, or otherwise clean up the user's existing changes on your own.
 * Do not create or switch branches without user approval.
-* After preflight passes, implement and fix without asking before each file edit or write. Only stop for approval on branch creation, dirty working tree handling, or destructive git/filesystem operations. Preflight must pass before any `Edit` or `Write`.
+* After preflight passes, implement and fix without asking before each file edit or write. Only stop for approval on branch creation, ordinary untracked-file handling, non-Git-project handling, or destructive git/filesystem operations. Preflight must pass before any `Edit` or `Write`.
 * Do not touch untracked files not created in this session unless the user explicitly asks.
 * Use a fresh Implementer subagent for implementation when available.
 * Reviewer agents must be read-only and must not fix issues.
 * Fixes must be made by an Implementer, not a Reviewer.
 * Emit explicit status log lines for major milestones. Use this format: `<stage> 開始` and `<stage> 完了 summary: <short summary>`.
-* At minimum, report `implementation 開始`, preflight, each implement/review/fix/verification stage, `implementation 保存開始` when a record is written, and exactly one terminal status: `implementation 完了 summary: ...`, `implementation 中断 summary: ...`, or `implementation 失敗 summary: ...`. Use `中断` when waiting for or stopped by a user decision, and `失敗` for an operational error. Do not end a run without a terminal status line.
+* At minimum, report `implementation 開始`, preflight, each implement/review/fix/verification stage, `implementation 保存開始` when a record is written, and exactly one terminal status: `implementation 完了 summary: ...`, `implementation 中断 summary: ...`, or `implementation 失敗 summary: ...`. Use `中断` when a user selection stops or cancels the run, or when the run must pause for an unresolved required user decision; do not emit it for a selection that permits the run to continue. Use `失敗` for an operational error. Do not end a run without a terminal status line.
 * For fix/review loops, include the version or round in stage names (for example: `implementation v1 実装開始`, `implementation v1 実装完了 summary: ...`, `implementation v1 review開始`, `implementation v1 review完了 summary: ...`, `implementation v2 修正開始`, `implementation v2 修正完了 summary: ...`).
 * After each subagent returns, print the required completion status line first, then (optionally) a short progress note with a few bullets (for an implementer, what it changed; for a reviewer, its verdict and top findings; for the finding-verifier, confirmed/adjusted/rejected counts). Keep it to a handful of lines; do not dump the subagent's full output.
 * Prefer simple, scoped changes.
@@ -53,37 +53,56 @@ Act as the orchestrator. Coordinate implementation, independent review, fixes, a
    * If the argument is a plan file path under `<project>/.claude/workflows/...`, derive `<project>` from that path. The project root is the path segment immediately before `.claude/workflows/`.
    * Before running `git status` or making edits, verify the current working directory is inside the target project root. If it is not, stop and ask the user to switch to the correct project directory.
 
-   **Dirty check (first)**
+   **Tracked-path check (first)**
 
-   * Run `git status` from the target project root immediately (for example, `git -C <project> status`).
-   * Ignored paths—including `.claude/workflows/` when excluded via `.gitignore`, `.git/info/exclude`, or global exclude—do not count as dirty.
+   * Inspect Git state from the target project root in a way that separates tracked modifications, additions, deletions, renames, and staging from non-ignored untracked paths (for example, `git -C <project> status --short`).
+   * Ignored paths—including `.claude/workflows/` when excluded via `.gitignore`, `.git/info/exclude`, or global exclude—remain omitted and do not enter either preflight decision.
 
-   If the working tree is dirty outside ignored paths:
+   If any tracked path is dirty:
 
-   * stop immediately; do not implement
-   * do not stash, discard, commit, or delete anything on your own
-   * list the dirty files briefly
-   * ask the user how to proceed
-   * wait for explicit cleanup or handling instructions
+   * stop immediately and briefly identify the tracked paths
+   * do not inspect untracked-path relevance, ask either preflight question, launch subagents, or mutate files
+   * do not stash, discard, commit, delete, move, or otherwise clean anything on your own
+   * end the current run with `implementation 中断 summary: ...`
 
-   **Branch decision (after clean check)**
+   **Untracked-path check (second)**
 
-   After the working tree is confirmed clean, read the plan only enough to classify task size and risk. Then recommend whether to create a new branch. Do not do deep implementation analysis or launch subagents before the branch decision is resolved.
+   Run this stage only after the tracked-path check passes. Consider all remaining non-ignored untracked paths, while preserving the rule that files predating this session must not be touched without explicit user instruction.
 
-   * say the working tree is clean
-   * recommend whether to create a new branch based on task risk:
-     * recommend a new branch for non-trivial, multi-file, or behavior-changing work
-     * say the current branch is fine for very small localized fixes
-   * ask for approval before creating or switching branches
-   * do not create or switch branches on your own
+   First, classify untracked paths under `<project>/.claude/` for a narrow preflight exemption:
 
-   Example when recommending a branch:
+   * Never apply the exemption when the target project is `~/.claude` or its resolved path is `/home/kawagutt/.claude`.
+   * For any other project, use only clear read-only evidence—such as tracked repository structure, documentation, and instructions—to determine whether the repository develops `.claude` configuration, skills, agents, or related tooling.
+   * Exempt these paths only when the evidence clearly shows an ordinary project whose purpose is not `.claude` development. If purpose is ambiguous, do not exempt them.
+   * The exemption only prevents those paths from blocking preflight or appearing in the question. It never authorizes reading beyond the evidence needed for classification or modifying the paths.
+   * If exempt `.claude/` paths coexist with other untracked paths, continue this stage with only the ordinary paths.
 
-   ```text
-   The working tree is clean. I recommend creating a new branch because this is a multi-file behavior change. Should I create one now, or continue on the current branch?
-   ```
+   If no ordinary untracked paths remain, continue to the branch decision. Otherwise, inspect only the read-only evidence needed to assess each path's relevance: location, name or type, relation to plan scope, and project conventions. Present a concise concrete path summary, a recommended action, and why the paths appear unrelated, project-relevant, disposable, or uncertain. For uncertain relevance, explain the uncertainty and conservatively recommend organizing the files.
 
-   If this is not a git repository, continue only after the user confirms how to proceed.
+   Then use the actual `AskUserQuestion` tool with one **single-select** question whose option labels are exactly:
+
+   1. `Continue and leave files untouched`
+   2. `Stop so I can commit or organize them`
+   3. `Stop so I can delete or move them`
+   4. `Cancel implementation`
+
+   Only `Continue and leave files untouched` permits preflight to continue, and it does not authorize touching the listed files. Either stop option or cancellation ends the run with `implementation 中断 summary: ...`. Never clean, delete, move, commit, stash, or otherwise modify the files.
+
+   **Branch decision (after tracked and untracked checks)**
+
+   Run branch analysis only after both Git preflight stages pass. Read the plan only enough to classify task size and risk; do not do deep implementation analysis or launch subagents before this decision is resolved.
+
+   * State that preflight passed.
+   * Recommend a new branch for non-trivial, multi-file, or behavior-changing work; recommend the current branch for a very small localized fix.
+   * Name the recommendation and give the concrete size or risk reason.
+   * Use the actual `AskUserQuestion` tool with one **single-select** question whose option labels are exactly:
+     1. `Create a new branch`
+     2. `Continue on the current branch`
+     3. `Cancel`
+   * Create or switch branches only after `Create a new branch` is selected. Proceed in place only after `Continue on the current branch` is selected. Do not infer approval from the recommendation, silence, or prior context.
+   * If `Cancel` is selected, end the run with `implementation 中断 summary: ...` without branch action.
+
+   If this is not a Git repository, keep the separate confirmation behavior: continue only after the user explicitly confirms how to proceed.
 
 2. Choose checkpoint size.
 
