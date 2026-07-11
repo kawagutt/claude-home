@@ -28,7 +28,10 @@ Keep orchestration light: confirm input, launch subagents, integrate results, an
 * Ask only for decisions that materially affect the plan.
 * The planner and reviewers must be separate contexts.
 * The reviewers must not modify the plan or repository.
-* After each subagent returns, print a short progress note to the user before continuing: a first line naming the subagent that finished, then a few bullet points summarizing its result (for the planner, the plan's shape and scope; for each reviewer, its verdict and top findings). Keep it to a handful of lines; do not dump the subagent's full output.
+* Emit explicit status log lines for major milestones. Use this format: `<stage> 開始` and `<stage> 完了 summary: <short summary>`.
+* At minimum, report `plan 開始`, each planner/reviewer stage, `plan 保存開始`, and exactly one terminal status: `plan 完了 summary: ...`, `plan 中断 summary: ...`, or `plan 失敗 summary: ...`. Use `中断` when waiting for or stopped by a user decision, and `失敗` for an operational error. Do not end a run without a terminal status line.
+* For planning/review loops, include the plan version in stage names (for example: `plan v1 作成開始`, `plan v1 作成完了 summary: ...`, `plan v1 review開始`, `plan v1 review完了 summary: ...`, `plan v2 作成開始`, `plan v2 作成完了 summary: ...`).
+* After each subagent returns, print the required completion status line first, then (optionally) a short progress note to the user with a few bullets (for the planner, the plan's shape and scope; for each reviewer, its verdict and top findings). Keep it to a handful of lines; do not dump the subagent's full output.
 * Limit planner revision loops to at most two unless the user explicitly asks for more.
 * Use one Plan Reviewer by default. Add a second independent reviewer only for high-risk plans.
 

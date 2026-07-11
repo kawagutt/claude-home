@@ -27,6 +27,9 @@ The user's initial idea may be incomplete, based on a misunderstanding, or not y
 * Do not write a detailed specification or implementation plan unless the user explicitly asks for one.
 * Do not edit tracked repository files. Aside from the optional `.git/info/exclude` update described in the save step, the only project-local writes are the shaped-instruction artifact under `.claude/workflows/`.
 * Always attempt to save the final shaped instruction when the discussion is complete. If saving is blocked by the user's decision or a filesystem error, paste the shaped instruction in the chat so it is not lost.
+* Emit explicit status log lines for major milestones. Use this format: `<stage> 開始` and `<stage> 完了 summary: <short summary>`.
+* At minimum, report `shape 開始`, `shape 保存開始`, and exactly one terminal status: `shape 完了 summary: ...`, `shape 中断 summary: ...`, or `shape 失敗 summary: ...`. Use `中断` when waiting for or stopped by a user decision, and `失敗` for an operational error. Do not end a run without a terminal status line.
+* When repository investigation or user clarification is needed, also report its start and completion (or `確認待ち summary: ...`) using the same format.
 * Do not simply rewrite the initial input without examining it.
 * Do not assume the user's proposed solution is necessarily the right solution.
 * Keep the discussion focused on decisions that materially affect the intended result.
