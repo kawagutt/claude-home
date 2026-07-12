@@ -1,13 +1,13 @@
 ---
 name: implementation
-description: Orchestrate implementation from an approved plan using a fresh implementer, risk-based review, fixes, and final verification.
-argument-hint: "<plan-file or approved plan>"
+description: Orchestrate implementation from an explicit actionable plan or concrete inline instruction using a fresh implementer, risk-based review, fixes, and final verification.
+argument-hint: "<plan-file or concrete implementation instruction>"
 disable-model-invocation: true
 ---
 
 # Goal
 
-Implement an approved plan with separation between implementation and review.
+Implement an explicit actionable plan file or a sufficiently concrete inline implementation instruction requested by the user, with separation between implementation and review. This input authorizes only its described in-scope edits and verification after preflight; it does not authorize handling existing changes, branch changes, destructive actions, or scope expansion.
 
 ## Input
 
@@ -22,13 +22,13 @@ Act as the orchestrator. Coordinate implementation, independent review, fixes, a
 * Run immediate preflight before any implementation work.
 * Do not stash, discard, commit, or otherwise clean up the user's existing changes on your own.
 * Do not create or switch branches without user approval.
-* After preflight passes, implement and fix without asking before each file edit or write. Only stop for approval on branch creation, ordinary untracked-file handling, non-Git-project handling, or destructive git/filesystem operations. Preflight must pass before any `Edit` or `Write`.
+* After preflight passes, do not seek per-edit approval for implementation or fixes, but stop at the explicit decision points below. Preflight must pass before any `Edit` or `Write`.
 * Do not touch untracked files not created in this session unless the user explicitly asks.
 * Use a fresh Implementer subagent for implementation when available.
 * Reviewer agents must be read-only and must not fix issues.
 * Fixes must be made by an Implementer, not a Reviewer.
-* Emit explicit status log lines for major milestones. Use this format: `<stage> 開始` and `<stage> 完了 summary: <short summary>`.
-* At minimum, report `implementation 開始`, preflight, each implement/review/fix/verification stage, `implementation 保存開始` when a record is written, and exactly one terminal status: `implementation 完了 summary: ...`, `implementation 中断 summary: ...`, or `implementation 失敗 summary: ...`. Use `中断` when a user selection stops or cancels the run, or when the run must pause for an unresolved required user decision; do not emit it for a selection that permits the run to continue. Use `失敗` for an operational error. Do not end a run without a terminal status line.
+* Follow the top-level workflow status and artifact protocol in CLAUDE.md.
+* At minimum, report `implementation 開始`, preflight, each implement/review/fix/verification stage, `implementation 保存開始` when a record is written, and exactly one terminal `implementation 完了 summary: ...`, `implementation 中断 summary: ...`, or `implementation 失敗 summary: ...` line.
 * For fix/review loops, include the version or round in stage names (for example: `implementation v1 実装開始`, `implementation v1 実装完了 summary: ...`, `implementation v1 review開始`, `implementation v1 review完了 summary: ...`, `implementation v2 修正開始`, `implementation v2 修正完了 summary: ...`).
 * After each subagent returns, print the required completion status line first, then (optionally) a short progress note with a few bullets (for an implementer, what it changed; for a reviewer, its verdict and top findings; for the finding-verifier, confirmed/adjusted/rejected counts). Keep it to a handful of lines; do not dump the subagent's full output.
 * Prefer simple, scoped changes.
@@ -49,9 +49,10 @@ Act as the orchestrator. Coordinate implementation, independent review, fixes, a
 
    * If the argument is a file path, note the plan path.
    * If the argument is inline text, use it directly. Use the current git repository root as the target project root. If the current directory is not inside a git repository, use the current working directory and follow the non-git confirmation rule below.
-   * If the plan is missing or too vague, stop and ask the user to run `/plan` or provide a clearer plan.
-   * If the argument is a plan file path under `<project>/.claude/workflows/...`, derive `<project>` from that path. The project root is the path segment immediately before `.claude/workflows/`.
-   * Before running `git status` or making edits, verify the current working directory is inside the target project root. If it is not, stop and ask the user to switch to the correct project directory.
+   * If the argument is a file path under `<project>/.claude/workflows/...`, derive `<project>` from that path. The project root is the path segment immediately before `.claude/workflows/`.
+   * For any other plan file path, use the current Git repository root as `<project>`; if the current directory is not inside a Git repository, use the current working directory and follow the non-Git confirmation rule below.
+   * Before interacting about repository state or making edits, verify the current working directory is inside the target project root. If it is not, stop and ask the user to switch to the correct project directory.
+   * After project resolution and containment verification, minimally read and validate the supplied plan or inline instruction enough to confirm it exists and is actionable. If it is missing, unreadable, or too vague, stop and ask the user to run `/plan` or provide a clearer instruction. Do not perform deep implementation analysis yet.
 
    **Tracked-path check (first)**
 
@@ -78,7 +79,6 @@ Act as the orchestrator. Coordinate implementation, independent review, fixes, a
    * If exempt `.claude/` paths coexist with other untracked paths, continue this stage with only the ordinary paths.
 
    If no ordinary untracked paths remain, continue to the branch decision. Otherwise, inspect only the read-only evidence needed to assess each path's relevance: location, name or type, relation to plan scope, and project conventions. Present a concise concrete path summary, a recommended action, and why the paths appear unrelated, project-relevant, disposable, or uncertain. For uncertain relevance, explain the uncertainty and conservatively recommend organizing the files.
-
    Then use the actual `AskUserQuestion` tool with one **single-select** question whose option labels are exactly:
 
    1. `Continue and leave files untouched`
@@ -90,7 +90,7 @@ Act as the orchestrator. Coordinate implementation, independent review, fixes, a
 
    **Branch decision (after tracked and untracked checks)**
 
-   Run branch analysis only after both Git preflight stages pass. Read the plan only enough to classify task size and risk; do not do deep implementation analysis or launch subagents before this decision is resolved.
+   Run branch analysis only after both Git preflight stages pass. Use the minimal plan validation already performed to classify task size and risk; do not do deep implementation analysis or launch subagents before this decision is resolved.
 
    * State that preflight passed.
    * Recommend a new branch for non-trivial, multi-file, or behavior-changing work; recommend the current branch for a very small localized fix.
@@ -114,10 +114,11 @@ Act as the orchestrator. Coordinate implementation, independent review, fixes, a
 
    Use the `implementer` custom subagent when available. Provide:
 
-   * the approved plan
-   * current repository constraints
+   * the explicit actionable plan or inline implementation instruction
+   * current repository constraints, including which tracked paths were created by this workflow and remain in scope for a fix round
    * instruction to use `implementation-execution` and `implementation-tdd` practices
    * scope boundaries
+   * For a fresh fix Implementer, re-check status first. Stop if unexpected dirty paths appeared; otherwise identify the prior workflow-owned dirty paths that it may continue editing.
 
 4. Choose a review profile.
 
@@ -139,7 +140,7 @@ Act as the orchestrator. Coordinate implementation, independent review, fixes, a
 
    Provide each reviewer with this **reviewer context package**:
 
-   * approved plan or fix request
+   * explicit actionable plan or concrete inline instruction
    * **unified diff with enough context** (required)
    * changed file list
    * git status summary
@@ -190,15 +191,10 @@ Act as the orchestrator. Coordinate implementation, independent review, fixes, a
 
 9. Save the run record.
 
-   Store workflow artifacts inside the current project under:
+   Follow the shared artifact defaults in CLAUDE.md, with these `/implementation`-specific rules:
 
-   ```text
-   <project>/.claude/workflows/<yyyymmdd>_<short-slug>/
-   ```
-
-   * Save the record under the same session directory as the plan. If the plan came from a saved `plan_*.md`, reuse that directory; otherwise derive and create it as in the `/plan` save step.
-   * If `.claude/workflows/` is not ignored yet and this is the first workflow write in the session, follow the same `.git/info/exclude` recommendation as in `/shape` and `/plan` before writing (check with `git check-ignore -q .claude/workflows/ .claude/workflows/__check__`; add the exclude entry only if not already present). If the user declines exclude setup, ask whether to save anyway as untracked or stop without saving. Do not silently save an unignored workflow artifact.
-   * Choose the smallest `N` starting at 0 for which `implementation_v<N>.md` does not exist; never overwrite an existing version. Write the record to `implementation_v<N>.md`, then copy it to `implementation_latest.md`.
+   * Save the record under the same session directory as the plan. If the plan came from a saved `plan_*.md`, reuse that directory; otherwise derive and create `<project>/.claude/workflows/<yyyymmdd>_<short-slug>/` as in `/plan`.
+   * Write the record to the smallest unused `implementation_v<N>.md`; after that succeeds, update `implementation_latest.md` with the same content.
    * Include only what carries signal: review profile used, what changed, meaningful findings and how they were triaged, any verification runs, and fix/review rounds. Omit sections that add no information.
    * Skip the record entirely when there is nothing meaningful to capture. Do not create empty or boilerplate records.
 

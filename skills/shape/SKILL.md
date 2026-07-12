@@ -27,9 +27,8 @@ The user's initial idea may be incomplete, based on a misunderstanding, or not y
 * Do not write a detailed specification or implementation plan unless the user explicitly asks for one.
 * Do not edit tracked repository files. Aside from the optional `.git/info/exclude` update described in the save step, the only project-local writes are the shaped-instruction artifact under `.claude/workflows/`.
 * Always attempt to save the final shaped instruction when the discussion is complete. If saving is blocked by the user's decision or a filesystem error, paste the shaped instruction in the chat so it is not lost.
-* Emit explicit status log lines for major milestones. Use this format: `<stage> 開始` and `<stage> 完了 summary: <short summary>`.
-* At minimum, report `shape 開始`, `shape 保存開始`, and exactly one terminal status: `shape 完了 summary: ...`, `shape 中断 summary: ...`, or `shape 失敗 summary: ...`. Use `中断` when waiting for or stopped by a user decision, and `失敗` for an operational error. Do not end a run without a terminal status line.
-* When repository investigation or user clarification is needed, also report its start and completion (or `確認待ち summary: ...`) using the same format.
+* Follow the top-level workflow status and artifact protocol in CLAUDE.md.
+* At minimum, report `shape 開始`, `shape 保存開始`, and exactly one terminal `shape 完了 summary: ...`, `shape 中断 summary: ...`, or `shape 失敗 summary: ...` line. When repository investigation or user clarification is needed, also report its start and completion (or `確認待ち summary: ...`).
 * Do not simply rewrite the initial input without examining it.
 * Do not assume the user's proposed solution is necessarily the right solution.
 * Keep the discussion focused on decisions that materially affect the intended result.
@@ -89,41 +88,15 @@ Attempt to save every completed `/shape` run so a later `/plan` can reuse it.
 
 ## Artifact location
 
-Store workflow artifacts inside the current project, not under the global `~/.claude` directory.
-
-Default target directory:
+Follow the shared artifact defaults in CLAUDE.md. For `/shape`, resolve `<project>` before saving, and use:
 
 ```text
 <project>/.claude/workflows/<yyyymmdd>_<short-slug>/
 ```
 
-Where `<project>` is the git repository root (or the current working directory when not in a git repo), `<yyyymmdd>` is today's date (`date +%Y%m%d`), and `<short-slug>` is a short kebab-case label from the topic. Create it with `mkdir -p`.
+Where `<yyyymmdd>` is today's date (`date +%Y%m%d`) and `<short-slug>` is a short kebab-case label from the topic. Create the directory with `mkdir -p`.
 
-Resolve `<project>` before saving. Use the current git repository root when inside a git repository; otherwise use the current working directory.
-
-Generated workflow artifacts are local working artifacts by default and should not be committed unless the user explicitly asks.
-
-Before writing artifacts, check whether `.claude/workflows/` is ignored by git (from the project root, e.g. `git check-ignore -q .claude/workflows/ .claude/workflows/__check__`).
-
-If the project is a git repository and `.claude/workflows/` is not ignored, tell the user once:
-
-```text
-`.claude/workflows/` is not ignored yet.
-I recommend adding it to `.git/info/exclude` so workflow artifacts stay project-local but do not dirty the repo. Should I add it?
-```
-
-Do not modify the repository `.gitignore` unless the user explicitly asks.
-
-If the user approves, add `.claude/workflows/` to `.git/info/exclude` only if an equivalent ignore rule is not already present. Do not duplicate the entry.
-
-If the user declines adding `.claude/workflows/` to `.git/info/exclude`, ask whether to:
-
-1. save anyway and allow `.claude/workflows/` to appear as untracked, or
-2. stop without saving.
-
-Do not silently save an unignored workflow artifact.
-
-If the project is not a git repository, write artifacts under the project-local workflow directory without git ignore setup.
+The shared ignore/exclude consent and non-Git rules apply. The files and shape-specific failure behavior below remain authoritative.
 
 ## Files
 
@@ -135,7 +108,7 @@ If the project is not a git repository, write artifacts under the project-local 
 
 # Final output
 
-After saving, return only:
+After saving and after emitting the mandatory terminal status line, return only:
 
 ## Summary
 

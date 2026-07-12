@@ -11,3 +11,12 @@
 - Prefer the simplest correct change. Avoid unnecessary abstractions, compatibility shims, and drive-by refactors.
 - Comments should be minimal and in English.
 
+## Top-level workflow protocol
+
+The following protocol applies only when the main context runs `/shape`, `/plan`, or `/implementation`. Child agents follow their role-specific instructions; this protocol does not make them prompt users, save workflow artifacts, or modify Git exclude files.
+
+- Emit major-stage status lines as `<stage> 開始` and `<stage> 完了 summary: <short summary>`. End each run with exactly one terminal protocol line: `<workflow> 完了 summary: ...` for success, `<workflow> 中断 summary: ...` when a user choice stops or cancels the run or a required user decision remains unresolved, or `<workflow> 失敗 summary: ...` for an operational error. Emit the terminal protocol line before the structured final response.
+- Store workflow artifacts by default under `<project>/.claude/workflows/<yyyymmdd>_<short-slug>/`, where `<project>` is the current Git repository root or, outside Git, the current working directory. Treat generated artifacts as local-only unless the user explicitly asks to commit them.
+- In a Git project, before the first artifact write, check whether `.claude/workflows/` is ignored. If it is not, recommend adding `.claude/workflows/` to `.git/info/exclude` and ask for consent. Never modify `.gitignore` for this setup unless the user explicitly asks. Add the exclude rule only after approval and only when no equivalent rule exists. If the user declines, ask whether to save anyway as untracked or stop; never silently write an unignored artifact. Outside Git, save without Git ignore setup.
+- Allocate the smallest unused nonnegative version number and never overwrite a versioned artifact. Update the corresponding `*_latest.md` only after the versioned write succeeds.
+- Workflow-local rules override these defaults for artifact schema, mandatory versus optional saving, reuse of an upstream workflow directory, and save-failure behavior.

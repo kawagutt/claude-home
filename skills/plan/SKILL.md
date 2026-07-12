@@ -15,21 +15,19 @@ $ARGUMENTS
 
 # Role
 
-Act as the orchestrator. Do not implement the task. Coordinate a Planner subagent and a Plan Reviewer subagent, then synthesize the result for the user.
+Act as the orchestrator. Do not implement the task or author substantive plan content. Coordinate a Planner subagent and independent Plan Reviewer subagent(s), route findings back to the Planner for revision, select the reviewed Planner result, then report, save, and present it. You may format the plan without materially changing it; return substantive changes to the Planner.
 
 Keep orchestration light: confirm input, launch subagents, integrate results, and save the artifact. Do not perform deep repository investigation yourself — delegate that to the Planner.
 
 # Rules
 
 * Do not edit tracked repository files. Aside from the optional `.git/info/exclude` update described in the save step, the only project-local writes are the plan artifact under `.claude/workflows/`.
-* Prefer the simplest correct plan.
-* Preserve fail-fast behavior; do not plan silent fallback behavior or hidden normalization unless requested.
+* Follow the top-level workflow status and artifact protocol in CLAUDE.md.
 * Do not ask the user questions whose answers can be found by inspecting the repository.
 * Ask only for decisions that materially affect the plan.
 * The planner and reviewers must be separate contexts.
 * The reviewers must not modify the plan or repository.
-* Emit explicit status log lines for major milestones. Use this format: `<stage> 開始` and `<stage> 完了 summary: <short summary>`.
-* At minimum, report `plan 開始`, each planner/reviewer stage, `plan 保存開始`, and exactly one terminal status: `plan 完了 summary: ...`, `plan 中断 summary: ...`, or `plan 失敗 summary: ...`. Use `中断` when waiting for or stopped by a user decision, and `失敗` for an operational error. Do not end a run without a terminal status line.
+* At minimum, report `plan 開始`, each planner/reviewer stage, `plan 保存開始`, and exactly one terminal `plan 完了 summary: ...`, `plan 中断 summary: ...`, or `plan 失敗 summary: ...` line.
 * For planning/review loops, include the plan version in stage names (for example: `plan v1 作成開始`, `plan v1 作成完了 summary: ...`, `plan v1 review開始`, `plan v1 review完了 summary: ...`, `plan v2 作成開始`, `plan v2 作成完了 summary: ...`).
 * After each subagent returns, print the required completion status line first, then (optionally) a short progress note to the user with a few bullets (for the planner, the plan's shape and scope; for each reviewer, its verdict and top findings). Keep it to a handful of lines; do not dump the subagent's full output.
 * Limit planner revision loops to at most two unless the user explicitly asks for more.
@@ -60,15 +58,18 @@ Keep orchestration light: confirm input, launch subagents, integrate results, an
    * constraints from CLAUDE.md and project instructions
    * explicit instruction to use the `plan-planning` skill
 
-4. After the Planner returns, classify the plan risk.
+4. After the Planner returns, classify the plan risk holistically.
 
-   High-risk indicators include:
+   Risk indicators include:
 
-   * multi-file behavior changes
+   * multi-file scope
+   * behavior changes
    * public API, schema, or contract changes
    * security-sensitive work
    * data migration or compatibility risk
    * architectural restructuring
+
+   Treat these as inputs to an overall judgment, not automatic escalators.
 
    * For normal plans, launch one Plan Reviewer subagent.
    * For high-risk plans, launch two Plan Reviewer subagents in parallel in fresh independent contexts, preferably on different configured models. Do not show either reviewer the other reviewer's findings.
@@ -88,54 +89,22 @@ Keep orchestration light: confirm input, launch subagents, integrate results, an
    * repeat review after revision
    * stop after two revision rounds and present remaining risks clearly
 
-6. Synthesize the final plan.
+6. Select and present the final Planner-authored plan.
 
    * Do not dump raw subagent transcripts.
-   * Keep the plan actionable and concise.
+   * Ensure the selected plan is actionable and concise; return any material content changes to the Planner.
    * Include assumptions and unresolved decisions.
    * Identify verification steps.
 
 7. Save the plan artifact.
 
-   Store workflow artifacts inside the current project, not under the global `~/.claude` directory.
+   Follow the shared artifact defaults in CLAUDE.md, with these `/plan`-specific rules:
 
-   Default target directory:
+   * Use `<project>/.claude/workflows/<yyyymmdd>_<short-slug>/`, with today's date (`date +%Y%m%d`) and a short kebab-case task label; create it with `mkdir -p`.
 
-   ```text
-   <project>/.claude/workflows/<yyyymmdd>_<short-slug>/
-   ```
-
-   Where `<project>` is the git repository root (or the current working directory when not in a git repo), `<yyyymmdd>` is today's date (`date +%Y%m%d`), and `<short-slug>` is a short kebab-case label (2–4 words) derived from the task. Create it with `mkdir -p`.
-
-   If this plan came from a saved shape file under `<project>/.claude/workflows/...`, reuse that same directory instead of creating a new one.
-
-   Generated workflow artifacts are local working artifacts by default and should not be committed unless the user explicitly asks.
-
-   Before writing artifacts, check whether `.claude/workflows/` is ignored by git (from the project root, e.g. `git check-ignore -q .claude/workflows/ .claude/workflows/__check__`).
-
-   If the project is a git repository and `.claude/workflows/` is not ignored, tell the user once:
-
-   ```text
-   `.claude/workflows/` is not ignored yet.
-   I recommend adding it to `.git/info/exclude` so workflow artifacts stay project-local but do not dirty the repo. Should I add it?
-   ```
-
-   Do not modify the repository `.gitignore` unless the user explicitly asks.
-
-   If the user approves, add `.claude/workflows/` to `.git/info/exclude` only if an equivalent ignore rule is not already present. Do not duplicate the entry.
-
-   If the user declines adding `.claude/workflows/` to `.git/info/exclude`, ask whether to:
-
-   1. save anyway and allow `.claude/workflows/` to appear as untracked, or
-   2. stop without saving.
-
-   Do not silently save an unignored workflow artifact.
-
-   If the project is not a git repository, write artifacts under the project-local workflow directory without git ignore setup.
-
-   * Choose the next version: the smallest `N` starting at 0 for which `plan_v<N>.md` does not exist. Never overwrite an existing `plan_v<N>.md`.
-   * Write the synthesized plan to `plan_v<N>.md`, then write the same content to `plan_latest.md`, overwriting it.
-   * Aside from the optional `.git/info/exclude` update described above, this is the only file write in this workflow; the planner and reviewer subagents remain read-only.
+   * If this plan came from a saved shape file under `<project>/.claude/workflows/...`, reuse that same directory instead of creating a new one.
+   * Write the selected Planner-authored plan to `plan_v<N>.md`; after that succeeds, write the same content to `plan_latest.md`.
+   * The allowed project-local artifact write set is those two plan files. A separately consented `.git/info/exclude` update is also allowed by the shared protocol; planner and reviewer subagents remain read-only.
 
 # Final output
 
