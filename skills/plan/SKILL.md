@@ -3,6 +3,7 @@ name: plan
 description: Orchestrate creation and independent review of an implementation plan from a shaped instruction or user request.
 argument-hint: "<shape-file or task>"
 disable-model-invocation: true
+model: opus
 ---
 
 # Goal
@@ -27,8 +28,8 @@ Keep orchestration light: confirm input, launch subagents, integrate results, an
 * Ask only for decisions that materially affect the plan.
 * The planner and reviewers must be separate contexts.
 * The reviewers must not modify the plan or repository.
-* At minimum, report `plan 開始`, each planner/reviewer stage, `plan 保存開始`, and exactly one terminal `plan 完了 summary: ...`, `plan 中断 summary: ...`, or `plan 失敗 summary: ...` line.
-* For planning/review loops, include the plan version in stage names (for example: `plan v1 作成開始`, `plan v1 作成完了 summary: ...`, `plan v1 review開始`, `plan v1 review完了 summary: ...`, `plan v2 作成開始`, `plan v2 作成完了 summary: ...`).
+* Report workflow-specific planner, reviewer, revision, and save stages with the plan version or round; rely on the shared protocol for status syntax and the exactly-one-terminal-line requirement.
+* The `model: opus` frontmatter applies only to the current invocation turn. On a later ordinary user turn, report the session/default route; do not claim the prior skill route remains active. Treat skill reinvocation as a restart/reload, not a normal resume.
 * After each subagent returns, print the required completion status line first, then (optionally) a short progress note to the user with a few bullets (for the planner, the plan's shape and scope; for each reviewer, its verdict and top findings). Keep it to a handful of lines; do not dump the subagent's full output.
 * Limit planner revision loops to at most two unless the user explicitly asks for more.
 * Use one Plan Reviewer by default. Add a second independent reviewer only for high-risk plans.
@@ -71,8 +72,15 @@ Keep orchestration light: confirm input, launch subagents, integrate results, an
 
    Treat these as inputs to an overall judgment, not automatic escalators.
 
-   * For normal plans, launch one Plan Reviewer subagent.
-   * For high-risk plans, launch two Plan Reviewer subagents in parallel in fresh independent contexts, preferably on different configured models. Do not show either reviewer the other reviewer's findings.
+   * For normal plans, launch one fresh independent primary Plan Reviewer using the `plan-reviewer` agent (requested alias `opus`).
+   * For high-risk plans, retain that primary reviewer and launch a second fresh independent Plan Reviewer explicitly with `model: sonnet`, in parallel. Give both identical request, plan, and repository context without sharing findings.
+
+
+   Routing terminology and evidence:
+
+   * Keep the requested alias (`opus` or `sonnet`), configured resolved model from settings, and observed effective model from runtime telemetry distinct. Never infer observed routing from aliases or settings.
+   * Configured diversity exists only when the aliases resolve differently, the installed runtime supports the selection (including `inherit` behavior), and no concrete override collapses the routes. Telemetry audits the launch; it is not a gate. Without telemetry, report `configured second-model review; runtime route unconfirmed`.
+   * If a concrete override collapses both routes, do not use second-model wording. Add another reviewer only for a materially different role and call the result role-diverse.
 
    Use the `plan-reviewer` custom subagent. Provide each reviewer:
 
@@ -103,7 +111,7 @@ Keep orchestration light: confirm input, launch subagents, integrate results, an
    * Use `<project>/.claude/workflows/<yyyymmdd>_<short-slug>/`, with today's date (`date +%Y%m%d`) and a short kebab-case task label; create it with `mkdir -p`.
 
    * If this plan came from a saved shape file under `<project>/.claude/workflows/...`, reuse that same directory instead of creating a new one.
-   * Write the selected Planner-authored plan to `plan_v<N>.md`; after that succeeds, write the same content to `plan_latest.md`.
+   * Write the selected Planner-authored plan to the smallest unused `plan_v<N>.md`; never overwrite an existing versioned plan. The workflow explicitly authorizes replacing `plan_latest.md` with identical content only after the versioned write succeeds. Before replacing an existing `plan_latest.md`, read it to confirm it is the expected workflow artifact; then use `Edit` or `Write` to update it. Do not ask for separate overwrite consent unless its content or location contradicts that expectation.
    * The allowed project-local artifact write set is those two plan files. A separately consented `.git/info/exclude` update is also allowed by the shared protocol; planner and reviewer subagents remain read-only.
 
 # Final output

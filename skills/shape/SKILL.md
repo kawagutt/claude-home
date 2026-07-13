@@ -3,6 +3,7 @@ name: shape
 description: Clarify a rough idea through focused discussion and turn it into a concise, unambiguous instruction for a later Claude Code task.
 argument-hint: "<rough idea or request>"
 disable-model-invocation: true
+model: opus
 ---
 
 # Goal
@@ -28,7 +29,8 @@ The user's initial idea may be incomplete, based on a misunderstanding, or not y
 * Do not edit tracked repository files. Aside from the optional `.git/info/exclude` update described in the save step, the only project-local writes are the shaped-instruction artifact under `.claude/workflows/`.
 * Always attempt to save the final shaped instruction when the discussion is complete. If saving is blocked by the user's decision or a filesystem error, paste the shaped instruction in the chat so it is not lost.
 * Follow the top-level workflow status and artifact protocol in CLAUDE.md.
-* At minimum, report `shape 開始`, `shape 保存開始`, and exactly one terminal `shape 完了 summary: ...`, `shape 中断 summary: ...`, or `shape 失敗 summary: ...` line. When repository investigation or user clarification is needed, also report its start and completion (or `確認待ち summary: ...`).
+* Use workflow-specific stages for saving, repository investigation, and user clarification, while relying on the shared protocol for status syntax and the exactly-one-terminal-line requirement.
+* The `model: opus` frontmatter applies only to the current invocation turn. On a later ordinary user turn, report the session/default route; do not claim the prior skill route remains active. Treat skill reinvocation as a restart/reload, not a normal resume.
 * Do not simply rewrite the initial input without examining it.
 * Do not assume the user's proposed solution is necessarily the right solution.
 * Keep the discussion focused on decisions that materially affect the intended result.
@@ -101,7 +103,7 @@ The shared ignore/exclude consent and non-Git rules apply. The files and shape-s
 ## Files
 
 * Choose the smallest `N` starting at 0 for which `shape_v<N>.md` does not exist. Never overwrite an existing `shape_v<N>.md`.
-* Write the full shaped instruction to `shape_v<N>.md`, then write the same content to `shape_latest.md`, overwriting it.
+* The workflow explicitly authorizes writing that new versioned artifact and, only after its write succeeds, replacing `shape_latest.md` with the identical content. Before replacing an existing `shape_latest.md`, read it to confirm it is the expected workflow artifact; then use `Edit` or `Write` to update it. Do not ask for separate overwrite consent unless its content or location contradicts that expectation.
 * Include a short YAML frontmatter block with at least `status: final` and `created: <ISO-8601 timestamp>`.
 * If the discussion ends before the instruction is ready, you may save `shape.draft.md` with `status: draft` instead. Do not mark a draft as final.
 * `/plan` must receive an explicit shape file path. Do not auto-select `shape_latest.md` or any other saved shape.

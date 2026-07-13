@@ -3,6 +3,7 @@ name: implementation
 description: Orchestrate implementation from an explicit actionable plan or concrete inline instruction using a fresh implementer, risk-based review, fixes, and final verification.
 argument-hint: "<plan-file or concrete implementation instruction>"
 disable-model-invocation: true
+model: opus
 ---
 
 # Goal
@@ -20,7 +21,7 @@ Act as the orchestrator. Coordinate implementation, independent review, fixes, a
 # Rules
 
 * Run immediate preflight before any implementation work.
-* Do not stash, discard, commit, or otherwise clean up the user's existing changes on your own.
+* Do not stage, stash, discard, commit, or otherwise clean up the user's existing changes on your own. Staging is prohibited until implementation, review, fixes, and final verification finish; requested staging is separate post-workflow work.
 * Do not create or switch branches without user approval.
 * After preflight passes, do not seek per-edit approval for implementation or fixes, but stop at the explicit decision points below. Preflight must pass before any `Edit` or `Write`.
 * Do not touch untracked files not created in this session unless the user explicitly asks.
@@ -28,8 +29,7 @@ Act as the orchestrator. Coordinate implementation, independent review, fixes, a
 * Reviewer agents must be read-only and must not fix issues.
 * Fixes must be made by an Implementer, not a Reviewer.
 * Follow the top-level workflow status and artifact protocol in CLAUDE.md.
-* At minimum, report `implementation 開始`, preflight, each implement/review/fix/verification stage, `implementation 保存開始` when a record is written, and exactly one terminal `implementation 完了 summary: ...`, `implementation 中断 summary: ...`, or `implementation 失敗 summary: ...` line.
-* For fix/review loops, include the version or round in stage names (for example: `implementation v1 実装開始`, `implementation v1 実装完了 summary: ...`, `implementation v1 review開始`, `implementation v1 review完了 summary: ...`, `implementation v2 修正開始`, `implementation v2 修正完了 summary: ...`).
+* Report workflow-specific preflight, implementation, review, fix, verification, and save stages with versions or rounds; rely on the shared protocol for status syntax and the exactly-one-terminal-line requirement.
 * After each subagent returns, print the required completion status line first, then (optionally) a short progress note with a few bullets (for an implementer, what it changed; for a reviewer, its verdict and top findings; for the finding-verifier, confirmed/adjusted/rejected counts). Keep it to a handful of lines; do not dump the subagent's full output.
 * Prefer simple, scoped changes.
 * Preserve fail-fast behavior.
@@ -37,64 +37,56 @@ Act as the orchestrator. Coordinate implementation, independent review, fixes, a
 * Run meaningful verification before declaring completion.
 * Save a record of the run under `<project>/.claude/workflows/...` in the same session directory as the plan. Record only what carries signal; skip meaningless or empty records.
 * Choose the lightest review profile that fits the change. Do not run every reviewer on every task.
-* When using a second-model reviewer or verifier, do not assume the requested per-invocation model was honored. If `CLAUDE_CODE_SUBAGENT_MODEL` is set, it may override per-invocation and agent-frontmatter model choices. Before high-risk second-model review, check whether that variable forces all subagents to one model. If second-model independence cannot be guaranteed, warn the user instead of claiming a second-model review.
+* Keep requested alias, configured resolved model, and observed effective model distinct. Telemetry audits but does not gate configured-diverse routing; never infer observed routing. A concrete override that collapses routes prohibits second-model wording.
+* The `model: opus` frontmatter applies only to this invocation turn. Later ordinary turns use the session/default route; do not claim the prior skill route remains active. Skill reinvocation is a restart/reload, not normal resume.
 
 # Process
 
-1. Immediate preflight.
+1. **Immediate preflight.** Resolve and minimally validate the target and actionable input before subagents, deep analysis, status interaction, edits, or writes.
 
-   Do this before launching subagents or making edits.
+   **Resolve target project and input**
 
-   **Resolve target project**
-
-   * If the argument is a file path, note the plan path.
-   * If the argument is inline text, use it directly. Use the current git repository root as the target project root. If the current directory is not inside a git repository, use the current working directory and follow the non-git confirmation rule below.
-   * If the argument is a file path under `<project>/.claude/workflows/...`, derive `<project>` from that path. The project root is the path segment immediately before `.claude/workflows/`.
-   * For any other plan file path, use the current Git repository root as `<project>`; if the current directory is not inside a Git repository, use the current working directory and follow the non-Git confirmation rule below.
-   * Before interacting about repository state or making edits, verify the current working directory is inside the target project root. If it is not, stop and ask the user to switch to the correct project directory.
-   * After project resolution and containment verification, minimally read and validate the supplied plan or inline instruction enough to confirm it exists and is actionable. If it is missing, unreadable, or too vague, stop and ask the user to run `/plan` or provide a clearer instruction. Do not perform deep implementation analysis yet.
+   * If the argument is a file path under `<project>/.claude/workflows/...`, derive `<project>` from the path segment immediately before `.claude/workflows/` and use that file as the plan.
+   * For any other plan file path, use the current Git repository root as `<project>`.
+   * For inline text, use the current Git repository root as `<project>`.
+   * If the resolved target is not inside a Git repository, stop and explain: `This workflow requires a Git repository for baseline capture, change-set reconciliation, and review packaging. Please initialize a Git repository, then run /implementation again.` Do not initialize Git or implement through this workflow.
+   * Before repository-state interaction, edits, writes, or subagents, verify that the current working directory is inside the resolved target project root. If it is not, stop and ask the user to switch to the correct project directory.
+   * Minimally read and validate the supplied plan or inline instruction enough to confirm that it exists, is readable, and contains actionable implementation work. If it is missing, unreadable, or too vague, stop and ask the user to run `/plan` or provide a clearer instruction. Do not perform deep implementation analysis yet.
 
    **Tracked-path check (first)**
 
-   * Inspect Git state from the target project root in a way that separates tracked modifications, additions, deletions, renames, and staging from non-ignored untracked paths (for example, `git -C <project> status --short`).
-   * Ignored paths—including `.claude/workflows/` when excluded via `.gitignore`, `.git/info/exclude`, or global exclude—remain omitted and do not enter either preflight decision.
+   In Git, capture exactly `git -C <project> status --porcelain=v1 --untracked-files=all`, then first evaluate every tracked modification, addition, deletion, rename, conflict, and staged entry. Ignored paths remain outside dirty-state checks.
 
    If any tracked path is dirty:
 
    * stop immediately and briefly identify the tracked paths
    * do not inspect untracked-path relevance, ask either preflight question, launch subagents, or mutate files
-   * do not stash, discard, commit, delete, move, or otherwise clean anything on your own
-   * end the current run with `implementation 中断 summary: ...`
+   * do not stage, stash, discard, commit, delete, move, or otherwise clean anything
+   * end the run with `implementation 中断 summary: ...`
 
    **Untracked-path check (second)**
 
-   Run this stage only after the tracked-path check passes. Consider all remaining non-ignored untracked paths, while preserving the rule that files predating this session must not be touched without explicit user instruction.
+   Run this stage only after the tracked-path check passes. Record all pre-existing non-ignored untracked paths. There is no `.claude/` or home-directory exemption. Fingerprint protected untracked paths without following symlinks: for a regular file, record `lstat` metadata, byte size, and a streaming content hash; for a symlink, record `lstat` metadata and hash the link-target text itself without reading the referenced target; for a directory, fingerprint the individual untracked entries reported by `--untracked-files=all` rather than its mtime. For a FIFO, socket, device, or other special type, stop and ask rather than opening or hashing it.
 
-   First, classify untracked paths under `<project>/.claude/` for a narrow preflight exemption:
+   * If no non-ignored untracked paths remain, continue to the branch decision.
+   * Otherwise inspect only the read-only evidence needed to assess each path's scope relevance: location, name or type, relationship to the actionable input, and project conventions.
+   * If every path is clearly unrelated, briefly report them and continue automatically without touching or adding them to the session change set.
+   * If any path has uncertain relevance, explain the uncertainty and use the actual `AskUserQuestion` tool with one **single-select** question whose option labels are exactly:
+     1. `Continue and leave files untouched`
+     2. `Stop so I can commit or organize them`
+     3. `Stop so I can delete or move them`
+     4. `Cancel implementation`
+   * If a path clearly overlaps required implementation scope, stop before implementation, explain the collision, and ask the user to add, commit, move, remove, or otherwise organize it. Require a fresh `/implementation` run afterward.
 
-   * Never apply the exemption when the target project is `~/.claude` or its resolved path is `/home/kawagutt/.claude`.
-   * For any other project, use only clear read-only evidence—such as tracked repository structure, documentation, and instructions—to determine whether the repository develops `.claude` configuration, skills, agents, or related tooling.
-   * Exempt these paths only when the evidence clearly shows an ordinary project whose purpose is not `.claude` development. If purpose is ambiguous, do not exempt them.
-   * The exemption only prevents those paths from blocking preflight or appearing in the question. It never authorizes reading beyond the evidence needed for classification or modifying the paths.
-   * If exempt `.claude/` paths coexist with other untracked paths, continue this stage with only the ordinary paths.
+   Record the clean tracked baseline, all pre-existing non-ignored untracked paths, and each protected untracked path's type, mode, byte size, and content hash, plus approved semantic edit scope and approved output paths. `Continue and leave files untouched` never adds a pre-existing untracked path to the session change set. Never modify a pre-existing untracked path during this workflow.
 
-   If no ordinary untracked paths remain, continue to the branch decision. Otherwise, inspect only the read-only evidence needed to assess each path's relevance: location, name or type, relation to plan scope, and project conventions. Present a concise concrete path summary, a recommended action, and why the paths appear unrelated, project-relevant, disposable, or uncertain. For uncertain relevance, explain the uncertainty and conservatively recommend organizing the files.
-   Then use the actual `AskUserQuestion` tool with one **single-select** question whose option labels are exactly:
+   **Branch decision (after both preflight checks)**
 
-   1. `Continue and leave files untouched`
-   2. `Stop so I can commit or organize them`
-   3. `Stop so I can delete or move them`
-   4. `Cancel implementation`
+   Use the minimal input validation already performed to classify task size and risk; do not do deep implementation analysis or launch subagents before this decision is resolved.
 
-   Only `Continue and leave files untouched` permits preflight to continue, and it does not authorize touching the listed files. Either stop option or cancellation ends the run with `implementation 中断 summary: ...`. Never clean, delete, move, commit, stash, or otherwise modify the files.
-
-   **Branch decision (after tracked and untracked checks)**
-
-   Run branch analysis only after both Git preflight stages pass. Use the minimal plan validation already performed to classify task size and risk; do not do deep implementation analysis or launch subagents before this decision is resolved.
-
-   * State that preflight passed.
-   * Recommend a new branch for non-trivial, multi-file, or behavior-changing work; recommend the current branch for a very small localized fix.
-   * Name the recommendation and give the concrete size or risk reason.
+   * State that both preflight checks passed.
+   * Recommend a new branch for non-trivial, multi-file, behavior-changing, or higher-risk work; recommend the current branch for a very small localized fix.
+   * State the recommendation and the concrete size or risk reason.
    * Use the actual `AskUserQuestion` tool with one **single-select** question whose option labels are exactly:
      1. `Create a new branch`
      2. `Continue on the current branch`
@@ -102,105 +94,53 @@ Act as the orchestrator. Coordinate implementation, independent review, fixes, a
    * Create or switch branches only after `Create a new branch` is selected. Proceed in place only after `Continue on the current branch` is selected. Do not infer approval from the recommendation, silence, or prior context.
    * If `Cancel` is selected, end the run with `implementation 中断 summary: ...` without branch action.
 
-   If this is not a Git repository, keep the separate confirmation behavior: continue only after the user explicitly confirms how to proceed.
+   For Git targets, run the tracked and untracked checks and then the branch decision. Do not require an isolated worktree.
 
-2. Choose checkpoint size.
+2. **Implement in checkpoints.** Give a fresh Implementer the plan, scope, expected outputs, protected existing untracked paths, and TDD/execution instructions. Require no staging and request touched/created-path reporting only as a supplementary cross-check.
 
-   * Small task: implement all planned tasks, then review once.
-   * Larger task: implement natural checkpoints and review each checkpoint.
-   * Do not default to per-task multiple reviewers when that would be unnecessarily heavy.
+   Immediately before each implementation or fix-round Implementer launch, recapture porcelain status and require an exact match with the accepted snapshot: porcelain status, session-change-set manifest, per-changed-path representation/content hashes, and protected-untracked fingerprints. A matching porcelain status alone is insufficient. Stop before launch if any mismatch appears.
 
-3. Launch a fresh Implementer subagent.
+   After the Implementer returns, do not require equality with the prior accepted snapshot. Capture the post-round state, compute and validate the expected round delta against assigned scope, and stop on unexpected, out-of-scope, staged, protected, or uncertain changes. If status or any protected untracked type, mode, byte size, or content hash changes unexpectedly, stop and report the affected paths; do not restore, attribute, or reconcile them automatically. After successful reconciliation, establish the post-round state as the new accepted snapshot and track paths first appearing during the session.
 
-   Use the `implementer` custom subagent when available. Provide:
+   Build the conservative **session change set** from baseline, protected pre-existing untracked set, post-round status delta, approved semantic scope/output paths, and workflow-start-new paths. Evidence may support inclusion but Git does not prove workflow causality. Do not stop solely because a clearly in-scope delta path was omitted from the Implementer report. Stop on scope escape, protected-path collision, staged state, clear concurrent-change evidence, material review-set uncertainty, or material unresolved report/status contradiction. If staged state appears, stop; never unstage files automatically.
 
-   * the explicit actionable plan or inline implementation instruction
-   * current repository constraints, including which tracked paths were created by this workflow and remain in scope for a fix round
-   * instruction to use `implementation-execution` and `implementation-tdd` practices
-   * scope boundaries
-   * For a fresh fix Implementer, re-check status first. Stop if unexpected dirty paths appeared; otherwise identify the prior workflow-owned dirty paths that it may continue editing.
+3. **Build one canonical base package per unchanged review round.** Include the request and approved plan, session-change-set manifest and status delta, representation of every changed path, relevant constraints, a concise verification summary, snapshot identifier, status snapshot, and per-represented-file content hashes. Do not hash verification output or invent repository-specific package limits or review caps that are not documented.
 
-4. Choose a review profile.
+   Use a conservative default package budget that stays substantially below the model context limit. The budget is a ceiling, not a target: do not pad the package or include unchanged context merely because capacity remains. Reserve enough capacity to represent every changed text path, then prioritize changed hunks and requested-behavior paths before larger excerpts. Reviewers may inspect further context with `Read`, `Grep`, or `Glob`. If the complete review representation cannot fit within the package budget, do not silently omit changed paths or required hunks and do not claim complete review coverage; ask the user to split the implementation into smaller checkpoints or stop review as incomplete.
 
-   Classify the change and run only the reviewers that fit. Default to the lightest profile that matches.
+   Use `git -C <project> diff --full-index --find-renames` for tracked text; plain `git diff` misses untracked files. For small new text use `git diff --no-index -- /dev/null <new-path>` (differences-found is normal success) or complete labelled content. Ordinary text gets a unified diff. Oversized text gets bounded diff/excerpts plus path, type, byte size, content hash, and truncation notice. Binary gets path, change type, mode, byte size, content hash, and relevant metadata/validation only—never raw binary or binary patches. Never silently omit a manifest path.
 
-   | Profile | When to use | Reviewers |
+   Validate complete coverage, representation types, no protected/unrelated paths, and that the current porcelain status, session-change-set manifest, per-changed-path representation/content hashes, and protected-untracked fingerprints match the accepted snapshot; a matching status alone is insufficient. Stop if any protected untracked fingerprint changes. Every reviewer in an unchanged round receives the same base package; rebuild it after every intentional fix.
+
+4. **Select and run reviewers.** Select the lightest applicable reviewer set using the matrix below. Specialized reviewers use requested alias `opus`. Launch every selected reviewer in a fresh independent context, in parallel when possible. Give every reviewer in the same unchanged round the exact same canonical base package and role-specific dynamic invocation metadata. Collect each reviewer verdict and findings before verification or triage.
+
+   | Change type | Reviewers | Conditional addition |
    | --- | --- | --- |
-   | Small | localized fix, few files, no contract change | `spec-reviewer`, `test-reviewer` |
-   | Medium | multi-file or moderate behavior change | above + `refactor-reviewer` |
-   | Structural / risky | layering, public contract, schema, or design changes | above + `architecture-reviewer` |
-   | Config / dependency / runtime | deps, CI, scripts, env, permissions | `spec-reviewer`, `environment-reviewer`, `test-reviewer` |
-   | High-risk / confusing | security-sensitive, subtle correctness, or major cross-cutting risk | add `holistic-reviewer` on a second configured model |
+   | Small localized behavior | spec, test | — |
+   | Medium behavior | spec, test | refactor only for new abstraction, duplicated logic, or meaningful naming churn |
+   | Structural | spec, architecture, test | refactor only when complexity changed |
+   | Configuration/dependency/runtime/permission | environment | combine with applicable set |
+   | High risk | holistic requested `sonnet` | when configured routes differ from primary `opus` routes |
 
-   Config/runtime and structural profiles can combine when both apply.
+   Deduplicate categories. Thus configuration-only is `{spec,test,environment}` and structural configuration/runtime with changed complexity is `{spec,architecture,test,environment,refactor}`. Configured diversity requires different alias resolutions, runtime selection support (including `inherit`), and no concrete collapsing override. Missing telemetry yields `configured second-model review; runtime route unconfirmed`; collapsed routes get no second-model label and holistic is added only as a materially different role.
 
-   The orchestrator runs `git diff`, `git status`, and any needed verification commands. Reviewers use `Read`, `Grep`, and `Glob` only and cannot run shell commands themselves.
+   If a reviewer returns `Needs info`, inspect its exact request. If it needs only additional read-only repository context and the base package snapshot is unchanged, provide a role-specific supplement and rerun only that reviewer. If repository content, status, diff, verification output, or protected-untracked fingerprint changes, invalidate the affected review round, rebuild the canonical base package, and rerun affected reviews only when the change resulted from an intentional fix. Do not treat `Needs info` as Pass or a normal non-blocking concern. If the requested information is unavailable, report that category as incomplete and do not claim it passed.
 
-5. Run the selected reviewers in parallel when possible.
+   After the reviewer batch returns, revalidate the base package snapshot against repository state, including status, changed-path hashes, and protected-untracked fingerprints, before using findings. If it changed unexpectedly while reviewers were running, discard stale findings, report the changed paths, and stop for user direction. Do not automatically attribute, reconcile, rebuild, or rerun after unexplained concurrent changes.
 
-   Provide each reviewer with this **reviewer context package**:
+5. **Verify eligible findings.** Verify only blocking findings, materially disputed findings, and significant high-risk holistic concerns. Before each verifier batch, verify the canonical base package snapshot still matches the repository, including status, changed-path hashes, and protected-untracked fingerprints; after it returns, revalidate again. If it changed unexpectedly while verifiers were running, discard stale verdicts, report the changed paths, and stop for user direction. Do not automatically attribute, reconcile, rebuild, or rerun after unexplained concurrent changes. Pass source role, requested alias, configured resolved model, observed model only if telemetry supplies it, routing request, and the canonical base package through the prompt.
 
-   * explicit actionable plan or concrete inline instruction
-   * **unified diff with enough context** (required)
-   * changed file list
-   * git status summary
-   * relevant test output or verification output
-   * relevant project constraints from CLAUDE.md
-   * any files or snippets the reviewer must inspect
-   * explicit instruction to use its matching `implementation-*-review` skill
+   For a known `opus` source use default `sonnet`; for known `sonnet` explicitly override the verifier to `model: opus`. For collapsed or unknown routes, use default `sonnet` only when safe and call it independent verification. Split mixed-source findings where possible; otherwise use default mixed-source independent wording. Telemetry absence never stops verification; insufficient finding/package context may produce `Needs info`. Preserve false-positive removal, severity adjustment, and sibling-occurrence sweeping.
 
-   Reviewers are read-only. They report issues only.
+6. **Triage, fix, and rereview.** Send blocking and agreed meaningful findings to a fresh Implementer; limit loops to two unless the user asks. Narrow rereview is allowed only after a demonstrably local fix. Any broader behavioral, structural, test, environment, complexity, or scope impact restores the full affected-category set and requires a rebuilt package.
 
-6. Verify findings only when needed.
+7. **Final verification.** Run relevant tests, checks, and practical end-to-end validation. Recapture status, ensure no staging, and report exact failures.
 
-   Combine reviewer findings and deduplicate.
-
-   Run `finding-verifier` only for:
-
-   * blocking findings
-   * materially disputed findings between reviewers
-   * high-risk runs where holistic review surfaced a significant concern worth confirming
-
-   Do not verify every non-blocking finding by default.
-
-   When verifying, spawn the verifier on a different configured model from the reviewer that raised the finding when second-model independence is available. If `CLAUDE_CODE_SUBAGENT_MODEL` prevents that, note the limitation in the review summary.
-
-   Provide each verifier with:
-
-   * the original finding
-   * the unified diff
-   * the list of changed files
-   * relevant surrounding files or snippets
-   * suspected patterns or search terms for sweeping similar occurrences
-
-   Carry forward each verdict: drop false positives (record why), keep confirmed findings with their adjusted severity, and promote any similar occurrences the verifier surfaced to new findings of the same class.
-
-7. Triage findings.
-
-   * Work from the verified set when verification ran; otherwise use the raw reviewer findings.
-   * Ignore findings that are clearly out of scope or that verification refuted, and explain why.
-   * Send blocking and agreed meaningful findings back to an Implementer for fixes.
-   * Re-review significant fixes when needed.
-   * Limit fix/review loops to two unless the user asks for more.
-
-8. Final verification.
-
-   * Run relevant tests, type checks, linters, or direct behavior checks.
-   * For nontrivial product changes, verify the affected flow end-to-end when practical.
-   * Report exact failures if verification fails.
-
-9. Save the run record.
-
-   Follow the shared artifact defaults in CLAUDE.md, with these `/implementation`-specific rules:
-
-   * Save the record under the same session directory as the plan. If the plan came from a saved `plan_*.md`, reuse that directory; otherwise derive and create `<project>/.claude/workflows/<yyyymmdd>_<short-slug>/` as in `/plan`.
-   * Write the record to the smallest unused `implementation_v<N>.md`; after that succeeds, update `implementation_latest.md` with the same content.
-   * Include only what carries signal: review profile used, what changed, meaningful findings and how they were triaged, any verification runs, and fix/review rounds. Omit sections that add no information.
-   * Skip the record entirely when there is nothing meaningful to capture. Do not create empty or boilerplate records.
+8. **Save the run record.** Reuse the plan workflow directory or derive the shared default. Write the smallest unused `implementation_v<N>.md`; never overwrite an existing versioned record. The workflow explicitly authorizes replacing `implementation_latest.md` with identical content only after the versioned write succeeds. Before replacing an existing `implementation_latest.md`, read it to confirm it is the expected workflow artifact; then use `Edit` or `Write` to update it. Do not ask for separate overwrite consent unless its content or location contradicts that expectation. Include only meaningful review, change, finding, verification, and round information; skip empty records. Preserve shared ignored-artifact and save-failure behavior and never alter ignore/exclude setup implicitly.
 
 # Final output
 
-Return:
+Return exactly:
 
 ## Completed
 
@@ -208,7 +148,7 @@ Summarize what changed.
 
 ## Reviews
 
-State which review profile ran and summarize outcomes. If verification ran, note which findings were confirmed, adjusted, or rejected as false positives.
+State the review profile and outcomes, including incomplete categories or verified findings when relevant. When model-diverse review or verification ran, describe routing using requested alias, configured resolved model, and observed effective model when telemetry is available. Omit routing details when no model-diverse launch occurred and there is no routing limitation to report.
 
 ## Verification
 
@@ -220,4 +160,4 @@ Mention remaining risks, assumptions, or follow-up work only if relevant.
 
 ## Saved record
 
-State the path of the `implementation_v<N>.md` written, and that `implementation_latest.md` mirrors it. If no record was warranted, say so in one line.
+State the versioned record path and that `implementation_latest.md` mirrors it, or say no meaningful record was warranted.

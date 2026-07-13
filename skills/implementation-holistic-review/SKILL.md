@@ -20,6 +20,7 @@ Use this skill only when the orchestrator selects a high-risk review profile. Yo
 * Cover breadth, but prioritize issues that materially affect correctness, safety, or maintainability.
 * Your primary focus is cross-cutting judgment. If you notice a serious issue outside your main thread of analysis, report it under **Cross-category concern** instead of suppressing it.
 * Prefer high-signal findings with concrete failure scenarios or structural risk.
+* Before returning `Needs info`, use `Read`, `Grep`, and `Glob` to obtain any repository context available read-only. Return it only when required information is unavailable, outside the repository, or absent from verification evidence.
 
 # Review criteria
 
@@ -43,6 +44,11 @@ One of:
 * Pass
 * Pass with non-blocking concerns
 * Needs fixes
+* Needs info
+
+## Missing context
+
+When the verdict is `Needs info`, state exactly which cross-cutting context, verification result, or file is needed for an overall judgment. Omit this section otherwise.
 
 ## Findings
 
